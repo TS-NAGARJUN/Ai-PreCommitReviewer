@@ -3,24 +3,25 @@
   "displayName": "AI Pre-commit Reviewer",
   "description": "AI-powered pre-commit code review for VS Code.",
   "version": "0.0.1",
-  "publisher": "your-publisher-name",
+  "publisher": "TS-NAGARJUN",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/AI-PreCommitReviewer"
+    "url": "https://github.com/TS-NAGARJUN/AI-PreCommitReviewer"
   },
   "bugs": {
-    "url": "https://github.com/your-username/AI-PreCommitReviewer/issues"
+    "url": "https://github.com/TS-NAGARJUN/AI-PreCommitReviewer/issues"
   },
-  "homepage": "https://github.com/your-username/AI-PreCommitReviewer",
+  "homepage": "https://github.com/TS-NAGARJUN/AI-PreCommitReviewer",
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.120.0"
   },
-  "categories": [
-    "Other"
-  ],
   "activationEvents": [
     "onCommand:ai-pre-commit-reviewer.showSidebar",
     "onView:aiPreCommitReviewer.sidebar"
+  ],
+  "categories": [
+    "Other"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -41,6 +42,7 @@
     "viewsContainers": {
       "activitybar": [
         {
+          "icon": "icon.png",
           "id": "aiPreCommitReviewer",
           "title": "AI Reviewer"
         }
@@ -49,6 +51,7 @@
     "views": {
       "aiPreCommitReviewer": [
         {
+          "icon": "icon.png",
           "id": "aiPreCommitReviewer.sidebar",
           "name": "AI Review"
         }
