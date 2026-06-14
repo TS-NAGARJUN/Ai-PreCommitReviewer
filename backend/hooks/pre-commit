@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -e
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+if [ -z "$REPO_ROOT" ]; then
+  echo "Not a git repository; skipping AI pre-commit review."
+  exit 0
+fi
+
+URL="http://127.0.0.1:8765/analyze/hook"
+RESP=$(curl -sS -X POST -H "Content-Type: application/json" -d "{\"repoPath\": \"$REPO_ROOT\"}" "$URL" || true)
+if [ -z "$RESP" ]; then
+  echo "AI pre-commit review: no response from review service at $URL"
+  echo "To bypass, run 'git commit --no-verify' or start the backend server."
+  exit 1
+fi
+
+# Parse riskScore robustly from JSON response using python stdin
+RISK=$(printf '%s' "$RESP" | python -c 'import sys,json
+try:
+    data=json.load(sys.stdin)
+    print(data.get("riskScore", 0))
+except Exception:
+    print(0)')
+
+THRESH=8.0
+python -c '
+import sys
+try:
+    r=float(sys.argv[1])
+    t=float(sys.argv[2])
+    if r>=t:
+        print(f"AI pre-commit review blocked commit: riskScore={r} >= {t}")
+        sys.exit(1)
+    else:
+        print(f"AI pre-commit review passed: riskScore={r} < {t}")
+        sys.exit(0)
+except Exception as e:
+    print("Error evaluating risk score:", e)
+    sys.exit(1)
+' "$RISK" "$THRESH"

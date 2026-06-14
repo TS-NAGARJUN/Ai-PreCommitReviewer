@@ -1,0 +1,85 @@
+{
+  "name": "ai-pre-commit-reviewer",
+  "displayName": "AI Pre-commit Reviewer",
+  "description": "AI-powered pre-commit code review for VS Code.",
+  "version": "0.0.1",
+  "publisher": "your-publisher-name",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/AI-PreCommitReviewer"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/AI-PreCommitReviewer/issues"
+  },
+  "homepage": "https://github.com/your-username/AI-PreCommitReviewer",
+  "engines": {
+    "vscode": "^1.120.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:ai-pre-commit-reviewer.showSidebar",
+    "onView:aiPreCommitReviewer.sidebar"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ai-pre-commit-reviewer.showSidebar",
+        "title": "AI Pre-commit Review: Show Sidebar"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "ai-pre-commit-reviewer.showSidebar",
+          "when": "true"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiPreCommitReviewer",
+          "title": "AI Reviewer"
+        }
+      ]
+    },
+    "views": {
+      "aiPreCommitReviewer": [
+        {
+          "id": "aiPreCommitReviewer.sidebar",
+          "name": "AI Review"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "package:vsix": "npx vsce package",
+    "publish:ext": "npx vsce publish",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.120.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "typescript-eslint": "^8.56.1",
+    "eslint": "^9.39.3",
+    "typescript": "^5.9.3",
+    "ts-loader": "^9.5.4",
+    "webpack": "^5.105.3",
+    "webpack-cli": "^6.0.1",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "vsce": "^2.0.0"
+  }
+}
