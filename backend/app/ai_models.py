@@ -1,10 +1,16 @@
+import asyncio
 import json
+import logging
 import os
 import re
-import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
+from dotenv import load_dotenv
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=BACKEND_DIR / ".env", override=False)
 
 logger = logging.getLogger("ai_models")
 
@@ -99,65 +105,169 @@ def _clean_string(value: Any) -> str:
     return str(value).strip()
 
 
-class GroqClient:
-    BASE_URL = "https://api.groq.com/v1/models"
-    MODEL_NAME = "llama-3.1-70b"
+class GeminiClient:
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+    MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
     def __init__(self, api_key: str):
         self.api_key = api_key
 
     async def review(self, prompt: str) -> str:
         if not self.api_key:
-            raise AIModelError("Groq API key is missing")
+            raise AIModelError("Gemini API key is missing")
 
-        payloads = [
-            {"input": prompt, "max_output_tokens": 1024, "temperature": 0.2},
-            {"prompt": prompt, "max_output_tokens": 1024, "temperature": 0.2},
-        ]
+        url = f"{self.BASE_URL}/{self.MODEL_NAME}:generateContent?key={self.api_key}"
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt}
+                    ]
+                }
+            ]
+        }
 
         async with httpx.AsyncClient(timeout=60.0) as client:
-            for payload in payloads:
-                for endpoint in ("infer", "generate"):
-                    url = f"{self.BASE_URL}/{self.MODEL_NAME}/{endpoint}"
-                    response = await client.post(
-                        url,
-                        headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                        json=payload,
-                    )
-                    if response.status_code == 404:
-                        continue
-                    if response.status_code >= 400:
-                        logger.warning("Groq %s returned %s: %s", url, response.status_code, response.text)
-                        continue
-                    return self._extract_text(response.json())
-
-        raise AIModelError("Groq API did not return a usable response")
+            response = await client.post(url, json=payload)
+            if response.status_code >= 400:
+                message = response.text or response.reason_phrase
+                raise AIModelError(f"Gemini API error {response.status_code}: {message}")
+            body = response.json()
+            return self._extract_text(body)
 
     @staticmethod
     def _extract_text(body: Any) -> str:
         if isinstance(body, dict):
-            if "results" in body and isinstance(body["results"], list) and body["results"]:
-                result = body["results"][0]
-                if isinstance(result, dict) and "output" in result:
-                    output = result["output"]
-                    if isinstance(output, list) and output:
-                        return str(output[0])
-                    return str(output)
-            if "output" in body:
-                output = body["output"]
-                if isinstance(output, list) and output:
-                    return str(output[0])
-                return str(output)
+            candidates = body.get("candidates") or []
+            if candidates:
+                first_candidate = candidates[0]
+                if isinstance(first_candidate, dict):
+                    content = first_candidate.get("content") or {}
+                    parts = content.get("parts") or []
+                    if parts:
+                        texts = []
+                        for part in parts:
+                            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                                texts.append(part["text"])
+                        if texts:
+                            return "\n".join(texts)
             if "text" in body:
                 return str(body["text"])
-            if "generated_text" in body:
-                return str(body["generated_text"])
-        if isinstance(body, list) and body:
-            first = body[0]
-            if isinstance(first, dict) and "generated_text" in first:
-                return str(first["generated_text"])
-            return str(first)
+            if "output_text" in body:
+                return str(body["output_text"])
         return str(body)
+
+
+class GroqClient:
+    BASE_URL = "https://api.groq.com"
+    DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+    def __init__(self, api_key: str, model_name: Optional[str] = None):
+        self.api_key = (api_key or "").strip()
+        self.model_name = (model_name or os.getenv("GROQ_MODEL") or self.DEFAULT_MODEL).strip()
+
+    async def review(self, prompt: str) -> str:
+        if not self.api_key:
+            raise AIModelError("Groq API key is missing")
+
+        url = f"{self.BASE_URL}/openai/v1/chat/completions"
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+        }
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        start_time = asyncio.get_running_loop().time()
+        logger.debug("Groq request URL=%s model=%s", url, self.model_name)
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            elapsed = asyncio.get_running_loop().time() - start_time
+            logger.warning("Groq request timed out after %.2fs", elapsed)
+            raise AIModelError(f"Groq request timed out after {elapsed:.2f}s") from exc
+        except httpx.ConnectError as exc:
+            logger.warning("Groq connection failed: %s", exc)
+            raise AIModelError(f"Groq network error: {exc}") from exc
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code if exc.response is not None else 0
+            body = exc.response.text if exc.response is not None else ""
+            logger.warning("Groq request failed with status %s: %s", status_code, body)
+            if status_code == 401:
+                raise AIModelError("Groq 401 Unauthorized: invalid or missing API key") from exc
+            if status_code == 403:
+                raise AIModelError("Groq 403 Forbidden: access denied") from exc
+            if status_code == 404:
+                raise AIModelError(f"Groq 404 Not Found: invalid endpoint or model '{self.model_name}'") from exc
+            if status_code == 429:
+                raise AIModelError("Groq 429 Rate limit exceeded") from exc
+            if status_code >= 500:
+                raise AIModelError(f"Groq 500+ server error: {body}") from exc
+            raise AIModelError(f"Groq API error {status_code}: {body}") from exc
+        except httpx.RequestError as exc:
+            logger.warning("Groq request failed: %s", exc)
+            raise AIModelError(f"Groq request failed: {exc}") from exc
+
+        elapsed = asyncio.get_running_loop().time() - start_time
+        logger.debug("Groq response status=%s duration=%.2fs body=%s", response.status_code, elapsed, response.text)
+
+        if response.status_code == 401:
+            raise AIModelError("Groq 401 Unauthorized: invalid or missing API key")
+        if response.status_code == 403:
+            raise AIModelError("Groq 403 Forbidden: access denied")
+        if response.status_code == 404:
+            raise AIModelError(f"Groq 404 Not Found: invalid endpoint or model '{self.model_name}'")
+        if response.status_code == 429:
+            raise AIModelError("Groq 429 Rate limit exceeded")
+        if response.status_code >= 500:
+            raise AIModelError(f"Groq 500+ server error: {response.text}")
+        if response.status_code >= 400:
+            raise AIModelError(f"Groq API error {response.status_code}: {response.text}")
+
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise AIModelError("Groq response was not valid JSON") from exc
+
+        return self._extract_text(body)
+
+    @staticmethod
+    def _extract_text(body: Any) -> str:
+        if not isinstance(body, dict):
+            raise AIModelError("Groq response was malformed")
+
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise AIModelError("Groq response was malformed: empty choices array")
+
+        first_choice = choices[0]
+        if not isinstance(first_choice, dict):
+            raise AIModelError("Groq response was malformed")
+
+        message = first_choice.get("message")
+        if not isinstance(message, dict):
+            raise AIModelError("Groq response was malformed")
+
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+            if parts:
+                return "\n".join(parts)
+
+        raise AIModelError("Groq response was malformed: missing message content")
 
 
 class HuggingFaceClient:
@@ -209,31 +319,78 @@ class HuggingFaceClient:
 
 
 class AIReviewService:
-    def __init__(self, groq_key: str, hf_token: str):
+    def __init__(self, groq_key: str, hf_token: str, gemini_key: str = ""):
         self.groq_key = groq_key
         self.hf_token = hf_token
+        self.gemini_key = gemini_key
+        self.gemini = GeminiClient(gemini_key)
         self.groq = GroqClient(groq_key)
         self.hf = HuggingFaceClient(hf_token)
+
+    async def check_models(self) -> Dict[str, Any]:
+        prompts = {
+            "gemini": "You are the Gemini model. Reply with a short confirmation that you are available and identify yourself as Gemini.",
+            "groq": "You are the Groq model. Reply with a short confirmation that you are available and identify yourself as Groq.",
+            "huggingface": "You are the Hugging Face model. Reply with a short confirmation that you are available and identify yourself as Hugging Face.",
+        }
+
+        results: Dict[str, Any] = {}
+        for name, prompt in prompts.items():
+            try:
+                if name == "gemini":
+                    response_text = await self.gemini.review(prompt)
+                elif name == "groq":
+                    response_text = await self.groq.review(prompt)
+                else:
+                    response_text = await self.hf.review(prompt)
+
+                results[name] = {
+                    "status": "ok",
+                    "response": _clean_string(response_text) or "ready",
+                }
+            except Exception as exc:
+                logger.warning("Model check failed for %s: %s", name, exc, exc_info=True)
+                error_text = str(exc)
+                if not error_text:
+                    error_text = repr(exc)
+                results[name] = {
+                    "status": "error",
+                    "response": error_text,
+                }
+
+        overall_status = "ok"
+        if any(item.get("status") != "ok" for item in results.values()):
+            overall_status = "partial_error"
+
+        return {
+            "status": overall_status,
+            "models": results,
+        }
 
     async def analyze(self, repo_path: str, branch: str, staged_diff: str, changed_files: List[str]) -> Dict[str, Any]:
         prompt = self._build_prompt(repo_path, branch, staged_diff, changed_files)
 
         try:
-            review_text = await self.groq.review(prompt)
-            logger.info("Groq review completed")
-        except Exception as groq_error:
-            logger.warning("Groq review failed: %s", groq_error)
+            review_text = await self.gemini.review(prompt)
+            logger.info("Gemini review completed")
+        except Exception as gemini_error:
+            logger.warning("Gemini review failed: %s", gemini_error)
             try:
-                review_text = await self.hf.review(prompt)
-                logger.info("HuggingFace review completed")
-            except Exception as hf_error:
-                logger.error("HuggingFace review failed: %s", hf_error)
-                return {
-                    "riskScore": 0.0,
-                    "summary": "AI review unavailable due to model API access failure.",
-                    "commitMsg": "AI review could not run because the external model API could not be reached.",
-                    "findings": [],
-                }
+                review_text = await self.groq.review(prompt)
+                logger.info("Groq review completed")
+            except Exception as groq_error:
+                logger.warning("Groq review failed: %s", groq_error)
+                try:
+                    review_text = await self.hf.review(prompt)
+                    logger.info("HuggingFace review completed")
+                except Exception as hf_error:
+                    logger.error("HuggingFace review failed: %s", hf_error)
+                    return {
+                        "riskScore": 0.0,
+                        "summary": "AI review unavailable due to model API access failure. Check GEMINI_API_KEY, GROQ_API_KEY, or HF_TOKEN.",
+                        "commitMsg": "AI review could not run because the configured model APIs could not be reached.",
+                        "findings": [],
+                    }
 
         return self._build_response(review_text)
 
@@ -307,4 +464,5 @@ class AIReviewService:
 def get_review_service() -> AIReviewService:
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     hf_token = os.getenv("HF_TOKEN", "").strip()
-    return AIReviewService(groq_key, hf_token)
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip()
+    return AIReviewService(groq_key, hf_token, gemini_key)

@@ -1,4 +1,9 @@
+import importlib
+import os
+from pathlib import Path
+
 import pytest
+from dotenv import dotenv_values
 from fastapi.testclient import TestClient
 from app.main import app
 
@@ -68,3 +73,40 @@ class TestCORSHeaders:
         assert response.status_code == 200
         data = response.json()
         assert "status" in data
+
+
+class TestCheckEndpoint:
+    """Test /check endpoint"""
+
+    def test_check_endpoint_returns_model_statuses(self, client, monkeypatch):
+        class DummyCheckService:
+            async def check_models(self):
+                return {
+                    "gemini": {"status": "ok", "response": "Gemini ready"},
+                    "groq": {"status": "ok", "response": "Groq ready"},
+                    "huggingface": {"status": "ok", "response": "Hugging Face ready"},
+                }
+
+        monkeypatch.setattr("app.main.get_review_service", lambda: DummyCheckService())
+
+        response = client.get("/check")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert "models" in data
+        assert data["models"]["gemini"]["response"] == "Gemini ready"
+
+    def test_main_loads_backend_dotenv_when_started_from_repo_root(self, monkeypatch):
+        backend_dir = Path(__file__).resolve().parent.parent
+        dotenv_path = backend_dir / ".env"
+        env_values = dotenv_values(dotenv_path)
+
+        monkeypatch.chdir(backend_dir.parent)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+        import app.main as main_module
+
+        importlib.reload(main_module)
+
+        assert os.getenv("GEMINI_API_KEY") == env_values.get("GEMINI_API_KEY")

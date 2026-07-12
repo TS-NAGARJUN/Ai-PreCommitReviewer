@@ -1,65 +1,64 @@
 # AI-PreCommitReviewer
 
-This repository contains a VS Code extension and a Python backend for performing AI-assisted pre-commit code review.
+This repository now supports a standalone CLI-first architecture for AI-assisted code review.
 
-## Installing Git Hooks (Manual)
+## Architecture
 
-You can install the pre-commit hook into a local repository using the provided installer script.
+- A lightweight npm CLI named review runs from any Git repository.
+- The CLI inspects the current repository, reads staged changes, and sends a clean JSON payload to a backend service.
+- The backend handles authentication, prompt construction, provider integration, and structured review responses.
 
-Usage:
+## CLI usage
+
+Install the package locally or globally:
 
 ```bash
-# from repository root
-python backend/scripts/install_hook.py install /path/to/your/repo
-# to force overwrite
-python backend/scripts/install_hook.py install /path/to/your/repo --force
-# to uninstall
-python backend/scripts/install_hook.py uninstall /path/to/your/repo
+cd cli
+npm install
+npm link
 ```
 
-The extension also attempts to auto-install the hook on activation when opening a workspace folder that contains a `.git` directory. If a hook already exists, it will not overwrite it.
+Run it from a Git repository:
 
-## Running the backend
-
-Create and activate a virtual environment, then install dependencies and start the server:
-
-```powershell
-cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --port 8765
+```bash
+review
 ```
 
-## Using the extension
+Set the backend endpoint and optional auth token:
 
-- Open VS Code on the workspace folder.
-- Start the backend server (see above).
-- Activate the extension sidebar: `AI Pre-commit Review` from the Activity Bar.
-- Click `Run Review` to analyze staged changes.
+```bash
+export REVIEW_BACKEND_URL=http://127.0.0.1:8765/review
+export REVIEW_API_TOKEN=your-token
+review
+```
 
-## Running tests
+## Backend usage
 
-The repository includes an end-to-end hook test that starts the backend and performs a git commit in a temporary repository.
-
-On Windows PowerShell:
+Start the FastAPI backend locally:
 
 ```powershell
 cd backend
 .\.venv\Scripts\Activate.ps1
-python scripts/test_hook_e2e.py
+uvicorn app.main:app --host 127.0.0.1 --port 8765
 ```
 
-On macOS/Linux:
+The backend exposes:
 
-```bash
+- GET /health
+- POST /review
+- POST /analyze/review
+- POST /analyze/context
+
+## Testing
+
+Run the Python backend tests:
+
+```powershell
 cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-python scripts/test_hook_e2e.py
+.\.venv\Scripts\python.exe -m pytest app/test_cli_architecture.py app/test_main.py
 ```
 
-## Continuous integration
+## Notes
 
-A GitHub Actions workflow runs the backend hook test and compiles the extension on push and pull request.
+The old extension package has been removed, and the primary workflow is now the standalone CLI plus backend service.
 
