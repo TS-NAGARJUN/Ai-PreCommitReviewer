@@ -106,8 +106,8 @@ def _clean_string(value: Any) -> str:
 
 
 class GeminiClient:
-    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-    MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+    MODEL_NAME = os.getenv("GEMINI_MODEL", "antigravity-preview-05-2026")
 
     def __init__(self, api_key: str):
         self.api_key = api_key
@@ -116,7 +116,16 @@ class GeminiClient:
         if not self.api_key:
             raise AIModelError("Gemini API key is missing")
 
-        url = f"{self.BASE_URL}/{self.MODEL_NAME}:generateContent?key={self.api_key}"
+        try:
+            return await self._review_via_generate_content(prompt)
+        except AIModelError as exc:
+            message = str(exc)
+            if "This model only supports Interactions API" in message or "supports Interactions API" in message:
+                return await self._review_via_interactions(prompt)
+            raise
+
+    async def _review_via_generate_content(self, prompt: str) -> str:
+        url = f"{self.BASE_URL}/models/{self.MODEL_NAME}:generateContent?key={self.api_key}"
         payload = {
             "contents": [
                 {
@@ -135,26 +144,79 @@ class GeminiClient:
             body = response.json()
             return self._extract_text(body)
 
+    async def _review_via_interactions(self, prompt: str) -> str:
+        url = f"{self.BASE_URL}/interactions?key={self.api_key}"
+        payload = {
+            "agent": self.MODEL_NAME,
+            "input": prompt,
+            "environment": "remote",
+            "store": True,
+        }
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(url, json=payload)
+            if response.status_code >= 400:
+                message = response.text or response.reason_phrase
+                raise AIModelError(f"Gemini Interactions API error {response.status_code}: {message}")
+            body = response.json()
+            return self._extract_text(body)
+
     @staticmethod
     def _extract_text(body: Any) -> str:
-        if isinstance(body, dict):
-            candidates = body.get("candidates") or []
-            if candidates:
-                first_candidate = candidates[0]
-                if isinstance(first_candidate, dict):
-                    content = first_candidate.get("content") or {}
-                    parts = content.get("parts") or []
-                    if parts:
-                        texts = []
-                        for part in parts:
-                            if isinstance(part, dict) and isinstance(part.get("text"), str):
-                                texts.append(part["text"])
-                        if texts:
-                            return "\n".join(texts)
-            if "text" in body:
-                return str(body["text"])
-            if "output_text" in body:
-                return str(body["output_text"])
+        if isinstance(body, str):
+            return body.strip()
+
+        if isinstance(body, list):
+            texts = []
+            for item in body:
+                if isinstance(item, str):
+                    texts.append(item.strip())
+                else:
+                    extracted = GeminiClient._extract_text(item)
+                    if extracted:
+                        texts.append(extracted)
+            return "\n".join(text for text in texts if text)
+
+        if not isinstance(body, dict):
+            return str(body)
+
+        for key in ("output_text", "text", "response_text"):
+            value = body.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        for key in ("output", "response", "content"):
+            value = body.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if isinstance(value, list):
+                extracted = GeminiClient._extract_text(value)
+                if extracted:
+                    return extracted
+            if isinstance(value, dict):
+                extracted = GeminiClient._extract_text(value)
+                if extracted:
+                    return extracted
+
+        candidates = body.get("candidates") or []
+        if candidates:
+            first_candidate = candidates[0]
+            if isinstance(first_candidate, dict):
+                content = first_candidate.get("content") or {}
+                parts = content.get("parts") or []
+                if parts:
+                    texts = []
+                    for part in parts:
+                        if isinstance(part, dict) and isinstance(part.get("text"), str):
+                            texts.append(part["text"])
+                    if texts:
+                        return "\n".join(texts)
+
+        if "text" in body:
+            return str(body["text"])
+        if "output_text" in body:
+            return str(body["output_text"])
+
         return str(body)
 
 
@@ -269,69 +331,17 @@ class GroqClient:
 
         raise AIModelError("Groq response was malformed: missing message content")
 
-
-class HuggingFaceClient:
-    BASE_URL = "https://api-inference.huggingface.co/models"
-
-    def __init__(self, token: str, model_name: str = "Qwen2.5-Coder-7B-Instruct"):
-        self.token = token
-        self.model_name = model_name
-
-    async def review(self, prompt: str) -> str:
-        if not self.token:
-            raise AIModelError("HuggingFace token is missing")
-
-        url = f"{self.BASE_URL}/{self.model_name}"
-        payload = {
-            "inputs": prompt,
-            "parameters": {
-                "max_new_tokens": 1024,
-                "temperature": 0.2,
-                "return_full_text": False,
-            },
-        }
-
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                url,
-                headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
-                json=payload,
-            )
-            if response.status_code >= 400:
-                message = response.text or response.reason_phrase
-                raise AIModelError(f"HuggingFace API error {response.status_code}: {message}")
-            body = response.json()
-            return self._extract_text(body)
-
-    @staticmethod
-    def _extract_text(body: Any) -> str:
-        if isinstance(body, list) and body:
-            first = body[0]
-            if isinstance(first, dict) and "generated_text" in first:
-                return str(first["generated_text"])
-            return str(first)
-        if isinstance(body, dict):
-            if "generated_text" in body:
-                return str(body["generated_text"])
-            if "text" in body:
-                return str(body["text"])
-        return str(body)
-
-
 class AIReviewService:
-    def __init__(self, groq_key: str, hf_token: str, gemini_key: str = ""):
+    def __init__(self, groq_key: str,ANTIGRAVITY_API_KEY: str = ""):
         self.groq_key = groq_key
-        self.hf_token = hf_token
-        self.gemini_key = gemini_key
-        self.gemini = GeminiClient(gemini_key)
+        self.ANTIGRAVITY_API_KEY = ANTIGRAVITY_API_KEY
+        self.gemini = GeminiClient(ANTIGRAVITY_API_KEY)
         self.groq = GroqClient(groq_key)
-        self.hf = HuggingFaceClient(hf_token)
 
     async def check_models(self) -> Dict[str, Any]:
         prompts = {
             "gemini": "You are the Gemini model. Reply with a short confirmation that you are available and identify yourself as Gemini.",
             "groq": "You are the Groq model. Reply with a short confirmation that you are available and identify yourself as Groq.",
-            "huggingface": "You are the Hugging Face model. Reply with a short confirmation that you are available and identify yourself as Hugging Face.",
         }
 
         results: Dict[str, Any] = {}
@@ -339,11 +349,8 @@ class AIReviewService:
             try:
                 if name == "gemini":
                     response_text = await self.gemini.review(prompt)
-                elif name == "groq":
-                    response_text = await self.groq.review(prompt)
                 else:
-                    response_text = await self.hf.review(prompt)
-
+                    response_text = await self.groq.review(prompt)
                 results[name] = {
                     "status": "ok",
                     "response": _clean_string(response_text) or "ready",
@@ -463,6 +470,5 @@ class AIReviewService:
 
 def get_review_service() -> AIReviewService:
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
-    hf_token = os.getenv("HF_TOKEN", "").strip()
-    gemini_key = os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip()
-    return AIReviewService(groq_key, hf_token, gemini_key)
+    gemini_key = os.getenv("ANTIGRAVITY_API_KEY", "").strip()
+    return AIReviewService(groq_key, gemini_key)

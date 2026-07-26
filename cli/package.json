@@ -6,6 +6,7 @@
     "review": "bin/review.js"
   },
   "main": "bin/review.js",
+  "preferGlobal": true,
   "scripts": {
     "test": "node --test"
   },

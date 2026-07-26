@@ -18,6 +18,27 @@ npm install
 npm link
 ```
 
+To install it on another machine, either package and install the tarball:
+
+```bash
+cd cli
+npm pack
+```
+
+Then on the target machine:
+
+```bash
+npm install -g review-cli-1.0.0.tgz
+```
+
+Or publish it to npm and install it as a normal global package:
+
+```bash
+cd cli
+npm login
+npm publish --access public
+```
+
 Run it from a Git repository:
 
 ```bash
