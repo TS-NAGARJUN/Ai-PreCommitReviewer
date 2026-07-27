@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ai-precommit-reviewer
+    env: docker
+    region: oregon
+    plan: free
+    dockerfilePath: backend/Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: REVIEW_API_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false

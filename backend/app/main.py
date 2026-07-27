@@ -199,3 +199,11 @@ async def scan(payload: dict):
     context = analyzer.get_context()
     findings = SecretScanner.scan(context.get("stagedDiff", ""))
     return {"findings": findings, "count": len(findings)}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8765"))
+    uvicorn.run("app.main:app", host=host, port=port, reload=False)
