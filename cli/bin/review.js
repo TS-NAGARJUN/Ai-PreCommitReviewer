@@ -37,6 +37,15 @@ function runGit(args, cwd) {
   return result.stdout.trim();
 }
 
+function validateWorkingDirectory(cwd) {
+  if (!cwd || !fs.existsSync(cwd)) {
+    throw new Error(`The directory does not exist: ${cwd}`);
+  }
+  if (!fs.statSync(cwd).isDirectory()) {
+    throw new Error(`The path is not a directory: ${cwd}`);
+  }
+}
+
 function detectRepo(cwd) {
   try {
     runGit(['rev-parse', '--is-inside-work-tree'], cwd);
@@ -125,15 +134,28 @@ function renderReport(result) {
 async function main() {
   const cwd = process.cwd();
   const env = loadEnvironmentVariables({ cwd });
-  process.env.REVIEW_BACKEND_URL = env.REVIEW_BACKEND_URL || process.env.REVIEW_BACKEND_URL || 'https://ai-precommitreviewer.onrender.com/review';
+  const localBackendUrl = 'http://127.0.0.1:8765/review';
+  const remoteBackendUrl = 'https://ai-precommitreviewer.onrender.com/review';
+
+  process.env.REVIEW_BACKEND_URL = env.REVIEW_BACKEND_URL || process.env.REVIEW_BACKEND_URL || localBackendUrl;
   process.env.REVIEW_API_TOKEN = env.REVIEW_API_TOKEN || process.env.REVIEW_API_TOKEN;
 
-  if (!detectRepo(cwd)) {
-    console.error('This directory is not a Git repository.');
+  try {
+    validateWorkingDirectory(cwd);
+  } catch (error) {
+    console.error(error.message);
     process.exit(1);
   }
 
-  const endpoint = process.env.REVIEW_BACKEND_URL || 'https://ai-precommitreviewer.onrender.com/review';
+  if (!detectRepo(cwd)) {
+    console.error(`This directory is not a Git repository: ${cwd}`);
+    console.error('Run review from a folder that contains a Git repository, for example:');
+    console.error('  cd path/to/your/repo');
+    console.error('  review');
+    process.exit(1);
+  }
+
+  const endpoint = process.env.REVIEW_BACKEND_URL || localBackendUrl || remoteBackendUrl;
   const context = collectContext(cwd);
   if (!context.stagedDiff && !context.changedFiles.length) {
     console.log('No staged changes found.');

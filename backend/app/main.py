@@ -54,11 +54,19 @@ async def check():
 
     return {"status": "ok", "models": result}
 
+def _validate_repo_path(repo_path: str) -> str:
+    if not repo_path:
+        raise HTTPException(status_code=400, detail="repoPath is required")
+    if not os.path.isdir(repo_path):
+        raise HTTPException(status_code=400, detail=f"repoPath does not exist or is not a directory: {repo_path}")
+    return repo_path
+
 @app.post("/analyze/context")
 async def get_context(payload: dict):
     if "repoPath" not in payload:
         raise HTTPException(status_code=400, detail="repoPath is required")
-    analyzer = GitAnalyzer(payload["repoPath"])
+    repo_path = _validate_repo_path(payload["repoPath"])
+    analyzer = GitAnalyzer(repo_path)
     return analyzer.get_context()
 
 @app.post("/analyze/review")
@@ -101,7 +109,7 @@ async def review_cli(payload: dict, request: Request):
         if token != expected_token:
             raise HTTPException(status_code=401, detail="Invalid authorization token")
 
-    repo_path = payload.get("repoPath") or "."
+    repo_path = _validate_repo_path(payload.get("repoPath") or ".")
 
     try:
         analyzer = GitAnalyzer(repo_path)

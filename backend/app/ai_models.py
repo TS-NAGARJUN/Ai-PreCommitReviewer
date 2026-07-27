@@ -23,17 +23,21 @@ def _extract_json(raw_text: str) -> str:
     if not raw_text:
         raise ValueError("Empty response text")
 
-    # Attempt to extract the first JSON object or array from the response.
-    start = raw_text.find("{")
-    if start == -1:
-        start = raw_text.find("[")
-        if start == -1:
-            raise ValueError("No JSON object or array found")
-        opening = "["
-        closing = "]"
+    if raw_text.startswith("{") or raw_text.startswith("["):
+        start = 0
+        opening = "{" if raw_text[0] == "{" else "["
+        closing = "}" if opening == "{" else "]"
     else:
-        opening = "{"
-        closing = "}"
+        start = raw_text.find("{")
+        if start == -1:
+            start = raw_text.find("[")
+            if start == -1:
+                raise ValueError("No JSON object or array found")
+            opening = "["
+            closing = "]"
+        else:
+            opening = "{"
+            closing = "}"
 
     depth = 0
     in_string = False
@@ -60,8 +64,31 @@ def _extract_json(raw_text: str) -> str:
 
 
 def _parse_json(raw_text: str) -> Any:
-    payload = _extract_json(raw_text)
-    return json.loads(payload)
+    if not raw_text or not isinstance(raw_text, str):
+        raise ValueError("Empty response text")
+
+    candidate = raw_text.strip()
+    if candidate.startswith("{") or candidate.startswith("["):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    try:
+        payload = _extract_json(candidate)
+        return json.loads(payload)
+    except ValueError:
+        if "```json" in candidate:
+            start = candidate.find("```json") + len("```json")
+            end = candidate.find("```", start)
+            if end != -1:
+                return json.loads(candidate[start:end].strip())
+        if "```" in candidate:
+            start = candidate.find("```") + len("```")
+            end = candidate.find("```", start)
+            if end != -1:
+                return json.loads(candidate[start:end].strip())
+        raise
 
 
 def _normalize_severity(value: Optional[str]) -> str:
@@ -211,6 +238,18 @@ class GeminiClient:
                             texts.append(part["text"])
                     if texts:
                         return "\n".join(texts)
+
+        if "steps" in body and isinstance(body.get("steps"), list):
+            for step in body.get("steps", []):
+                if isinstance(step, dict):
+                    content = step.get("content") or []
+                    if isinstance(content, list):
+                        extracted = GeminiClient._extract_text(content)
+                        if extracted:
+                            return extracted
+                    for key in ("summary", "text", "message"):
+                        if isinstance(step.get(key), str) and step.get(key, "").strip():
+                            return step.get(key)
 
         if "text" in body:
             return str(body["text"])

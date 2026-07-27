@@ -28,3 +28,23 @@ test('loadEnvironmentVariables reads values from .env files', () => {
   assert.equal(result.REVIEW_API_TOKEN, 'abc123');
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
+
+test('review command reports when the current directory does not exist', () => {
+  const missingDir = path.join(os.tmpdir(), 'review-cli-missing-dir');
+  fs.mkdirSync(missingDir, { recursive: true });
+  const originalCwd = process.cwd();
+  process.chdir(missingDir);
+
+  try {
+    const result = spawnSync('node', [path.join(__dirname, '..', 'bin', 'review.js')], {
+      cwd: missingDir,
+      encoding: 'utf8',
+      env: { ...process.env, REVIEW_BACKEND_URL: 'http://127.0.0.1:8765/review' }
+    });
+
+    assert.notStrictEqual(result.status, 0);
+    assert.match(`${result.stdout}\n${result.stderr}`, /not a Git repository/i);
+  } finally {
+    process.chdir(originalCwd);
+  }
+});
