@@ -1,5 +1,5 @@
 {
-  "name": "review-cli",
+  "name": "cli-precommit-reviewer",
   "version": "1.0.0",
   "description": "Cross-platform CLI for sending staged git diffs to the review backend",
   "bin": {

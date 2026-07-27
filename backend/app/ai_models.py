@@ -332,11 +332,12 @@ class GroqClient:
         raise AIModelError("Groq response was malformed: missing message content")
 
 class AIReviewService:
-    def __init__(self, groq_key: str,ANTIGRAVITY_API_KEY: str = ""):
+    def __init__(self, groq_key: str, antigravity_api_key: str = ""):
         self.groq_key = groq_key
-        self.ANTIGRAVITY_API_KEY = ANTIGRAVITY_API_KEY
-        self.gemini = GeminiClient(ANTIGRAVITY_API_KEY)
+        self.antigravity_api_key = antigravity_api_key
+        self.gemini = GeminiClient(antigravity_api_key)
         self.groq = GroqClient(groq_key)
+        self.hf = None
 
     async def check_models(self) -> Dict[str, Any]:
         prompts = {
@@ -377,29 +378,31 @@ class AIReviewService:
     async def analyze(self, repo_path: str, branch: str, staged_diff: str, changed_files: List[str]) -> Dict[str, Any]:
         prompt = self._build_prompt(repo_path, branch, staged_diff, changed_files)
 
-        try:
-            review_text = await self.gemini.review(prompt)
-            logger.info("Gemini review completed")
-        except Exception as gemini_error:
-            logger.warning("Gemini review failed: %s", gemini_error)
+        for provider_name, provider_call in (
+            ("gemini", lambda: self.gemini.review(prompt)),
+            ("groq", lambda: self.groq.review(prompt)),
+        ):
             try:
-                review_text = await self.groq.review(prompt)
-                logger.info("Groq review completed")
-            except Exception as groq_error:
-                logger.warning("Groq review failed: %s", groq_error)
-                try:
-                    review_text = await self.hf.review(prompt)
-                    logger.info("HuggingFace review completed")
-                except Exception as hf_error:
-                    logger.error("HuggingFace review failed: %s", hf_error)
-                    return {
-                        "riskScore": 0.0,
-                        "summary": "AI review unavailable due to model API access failure. Check GEMINI_API_KEY, GROQ_API_KEY, or HF_TOKEN.",
-                        "commitMsg": "AI review could not run because the configured model APIs could not be reached.",
-                        "findings": [],
-                    }
+                review_text = await provider_call()
+                logger.info("%s review completed", provider_name.capitalize())
+                return self._build_response(review_text)
+            except Exception as exc:
+                logger.warning("%s review failed: %s", provider_name.capitalize(), exc)
 
-        return self._build_response(review_text)
+        if self.hf is not None:
+            try:
+                review_text = await self.hf.review(prompt)
+                logger.info("HuggingFace review completed")
+                return self._build_response(review_text)
+            except Exception as hf_error:
+                logger.error("HuggingFace review failed: %s", hf_error)
+
+        return {
+            "riskScore": 0.0,
+            "summary": "AI review unavailable due to model API access failure. Check ANTIGRAVITY_API_KEY, GROQ_API_KEY, or HF_TOKEN.",
+            "commitMsg": "AI review could not run because the configured model APIs could not be reached.",
+            "findings": [],
+        }
 
     @staticmethod
     def _build_prompt(repo_path: str, branch: str, staged_diff: str, changed_files: List[str]) -> str:
