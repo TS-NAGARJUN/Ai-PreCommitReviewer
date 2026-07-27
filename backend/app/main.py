@@ -102,71 +102,82 @@ async def review_cli(payload: dict, request: Request):
             raise HTTPException(status_code=401, detail="Invalid authorization token")
 
     repo_path = payload.get("repoPath") or "."
-    analyzer = GitAnalyzer(repo_path)
-    context = analyzer.get_context()
-    secret_findings = SecretScanner.scan(context.get("stagedDiff", ""))
-    if secret_findings:
+
+    try:
+        analyzer = GitAnalyzer(repo_path)
+        context = analyzer.get_context()
+        secret_findings = SecretScanner.scan(context.get("stagedDiff", ""))
+        if secret_findings:
+            return {
+                "issues": [
+                    {
+                        "file": finding.get("file", "unknown"),
+                        "line": finding.get("line"),
+                        "message": finding.get("message", "Secret detected"),
+                        "category": finding.get("category", "security"),
+                    }
+                    for finding in secret_findings
+                ],
+                "severity": "high",
+                "explanation": "Secrets detected in staged changes. Review blocked.",
+                "suggestedFixes": ["Remove the credential or secret from the staged diff before continuing."],
+            }
+
+        service = get_review_service()
+        result = await service.analyze(
+            repo_path,
+            context.get("branch", ""),
+            context.get("stagedDiff", ""),
+            context.get("changedFiles", []),
+        )
+
+        findings = result.get("findings", []) or []
+        issues = [
+            {
+                "file": finding.get("file", "unknown"),
+                "line": finding.get("line"),
+                "message": finding.get("message", "No message provided."),
+                "category": finding.get("category", "other"),
+            }
+            for finding in findings
+            if isinstance(finding, dict)
+        ]
+
+        risk_score = float(result.get("riskScore", 0.0) or 0.0)
+        if risk_score >= 7.0 or any(
+            str(finding.get("severity", "")).lower() in {"high", "critical", "error"}
+            for finding in findings
+            if isinstance(finding, dict)
+        ):
+            severity = "high"
+        elif risk_score >= 3.0 or any(
+            str(finding.get("severity", "")).lower() in {"medium", "moderate", "warning", "warn"}
+            for finding in findings
+            if isinstance(finding, dict)
+        ):
+            severity = "medium"
+        else:
+            severity = "low"
+
+        suggested_fixes = [result.get("commitMsg", "Review complete.")]
+        if not suggested_fixes[0]:
+            suggested_fixes = ["Review the diff and address the flagged issues."]
+
         return {
-            "issues": [
-                {
-                    "file": finding.get("file", "unknown"),
-                    "line": finding.get("line"),
-                    "message": finding.get("message", "Secret detected"),
-                    "category": finding.get("category", "security"),
-                }
-                for finding in secret_findings
-            ],
-            "severity": "high",
-            "explanation": "Secrets detected in staged changes. Review blocked.",
-            "suggestedFixes": ["Remove the credential or secret from the staged diff before continuing."],
+            "issues": issues,
+            "severity": severity,
+            "explanation": result.get("summary", "Review completed successfully."),
+            "suggestedFixes": suggested_fixes,
         }
-
-    service = get_review_service()
-    result = await service.analyze(
-        repo_path,
-        context.get("branch", ""),
-        context.get("stagedDiff", ""),
-        context.get("changedFiles", []),
-    )
-
-    findings = result.get("findings", []) or []
-    issues = [
-        {
-            "file": finding.get("file", "unknown"),
-            "line": finding.get("line"),
-            "message": finding.get("message", "No message provided."),
-            "category": finding.get("category", "other"),
+    except Exception as exc:
+        logger = __import__("logging").getLogger("main")
+        logger.exception("Review endpoint failed")
+        return {
+            "issues": [],
+            "severity": "low",
+            "explanation": f"Review service temporarily unavailable: {exc}",
+            "suggestedFixes": ["Try again in a moment or check backend environment variables."],
         }
-        for finding in findings
-        if isinstance(finding, dict)
-    ]
-
-    risk_score = float(result.get("riskScore", 0.0) or 0.0)
-    if risk_score >= 7.0 or any(
-        str(finding.get("severity", "")).lower() in {"high", "critical", "error"}
-        for finding in findings
-        if isinstance(finding, dict)
-    ):
-        severity = "high"
-    elif risk_score >= 3.0 or any(
-        str(finding.get("severity", "")).lower() in {"medium", "moderate", "warning", "warn"}
-        for finding in findings
-        if isinstance(finding, dict)
-    ):
-        severity = "medium"
-    else:
-        severity = "low"
-
-    suggested_fixes = [result.get("commitMsg", "Review complete.")]
-    if not suggested_fixes[0]:
-        suggested_fixes = ["Review the diff and address the flagged issues."]
-
-    return {
-        "issues": issues,
-        "severity": severity,
-        "explanation": result.get("summary", "Review completed successfully."),
-        "suggestedFixes": suggested_fixes,
-    }
 
 @app.post("/analyze/hook")
 async def hook(payload: dict):
