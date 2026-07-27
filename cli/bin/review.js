@@ -4,6 +4,31 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 
+function loadEnvironmentVariables({ cwd = process.cwd(), existingEnv = process.env } = {}) {
+  const env = { ...existingEnv };
+  const envFiles = [path.join(cwd, '.env'), path.join(cwd, '..', '.env')];
+
+  for (const envFile of envFiles) {
+    if (!fs.existsSync(envFile)) continue;
+
+    const content = fs.readFileSync(envFile, 'utf8');
+    for (const rawLine of content.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const separatorIndex = line.indexOf('=');
+      if (separatorIndex === -1) continue;
+      const key = line.slice(0, separatorIndex).trim();
+      const value = line.slice(separatorIndex + 1).trim().replace(/^['"]|['"]$/g, '');
+      if (!key) continue;
+      if (!env[key]) {
+        env[key] = value;
+      }
+    }
+  }
+
+  return env;
+}
+
 function runGit(args, cwd) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
   if (result.status !== 0) {
@@ -99,12 +124,16 @@ function renderReport(result) {
 
 async function main() {
   const cwd = process.cwd();
+  const env = loadEnvironmentVariables({ cwd });
+  process.env.REVIEW_BACKEND_URL = env.REVIEW_BACKEND_URL || process.env.REVIEW_BACKEND_URL || 'https://ai-precommitreviewer.onrender.com/review';
+  process.env.REVIEW_API_TOKEN = env.REVIEW_API_TOKEN || process.env.REVIEW_API_TOKEN;
+
   if (!detectRepo(cwd)) {
     console.error('This directory is not a Git repository.');
     process.exit(1);
   }
 
-  const endpoint = process.env.REVIEW_BACKEND_URL || 'http://127.0.0.1:8765/review';
+  const endpoint = process.env.REVIEW_BACKEND_URL || 'https://ai-precommitreviewer.onrender.com/review';
   const context = collectContext(cwd);
   if (!context.stagedDiff && !context.changedFiles.length) {
     console.log('No staged changes found.');
@@ -114,7 +143,13 @@ async function main() {
   renderReport(result);
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  loadEnvironmentVariables,
+};
