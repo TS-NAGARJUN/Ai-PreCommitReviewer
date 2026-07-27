@@ -80,6 +80,8 @@ cd backend
 ```
 
 ## Notes
+tested results on a git repo
+<img width="1917" height="1063" alt="image" src="https://github.com/user-attachments/assets/ea0fca00-c339-4169-9075-eab651e99b25" />
 
-The old extension package has been removed, and the primary workflow is now the standalone CLI plus backend service.
+The otestld extension package has been removed, and the primary workflow is now the standalone CLI plus backend service.
 
