@@ -3,6 +3,11 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const chalk = require('chalk').default || require('chalk');
+const ora = require('ora').default || require('ora');
+const Table = require('cli-table3');
+const boxen = require('boxen').default || require('boxen');
+const logSymbols = require('log-symbols');
 
 function loadEnvironmentVariables({ cwd = process.cwd(), existingEnv = process.env } = {}) {
   const env = { ...existingEnv };
@@ -89,7 +94,19 @@ function postReview(payload, endpoint) {
       });
       res.on('end', () => {
         if (res.statusCode && res.statusCode >= 400) {
-          reject(new Error(`Backend request failed with ${res.statusCode}: ${data}`));
+          let parsed;
+          try {
+            parsed = JSON.parse(data);
+          } catch (_error) {
+            parsed = null;
+          }
+
+          const message = parsed && parsed.message
+            ? parsed.message
+            : `Backend request failed with ${res.statusCode}: ${data}`;
+          const error = new Error(message);
+          error.issues = Array.isArray(parsed && parsed.issues) ? parsed.issues : [];
+          reject(error);
           return;
         }
         try {
@@ -106,27 +123,117 @@ function postReview(payload, endpoint) {
   });
 }
 
-function renderReport(result) {
-  console.log('\nReview Summary');
-  console.log('-------------');
-  console.log(`Severity: ${result.severity || 'low'}`);
-  console.log(`Explanation: ${result.explanation || 'No explanation provided.'}`);
-  console.log('');
-  if (!result.issues || result.issues.length === 0) {
-    console.log('No issues found.');
+function getSeverityColor(severity) {
+  const normalizedSeverity = String(severity || 'low').toLowerCase();
+  if (normalizedSeverity === 'medium') {
+    return chalk.yellow;
+  }
+  if (normalizedSeverity === 'high' || normalizedSeverity === 'critical') {
+    return chalk.red.bold;
+  }
+  return chalk.green;
+}
+
+function getIssueLocation(issue) {
+  return issue.line ? `${issue.file}:${issue.line}` : issue.file;
+}
+
+function summarizeChangedFiles(context = {}) {
+  const changedFiles = Array.isArray(context.changedFiles) ? context.changedFiles : [];
+  const diffText = context.stagedDiff || '';
+  const lines = diffText.split(/\r?\n/);
+  const summaries = [];
+  let currentFile = null;
+  let additions = 0;
+  let deletions = 0;
+
+  const flushCurrentFile = () => {
+    if (!currentFile) return;
+    summaries.push({ file: currentFile, additions, deletions });
+  };
+
+  lines.forEach((line) => {
+    const fileMatch = line.match(/^diff --git a\/([^\s]+) b\/([^\s]+)$/);
+    if (fileMatch) {
+      flushCurrentFile();
+      currentFile = fileMatch[2];
+      additions = 0;
+      deletions = 0;
+      return;
+    }
+
+    if (!currentFile) return;
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      additions += 1;
+    } else if (line.startsWith('-') && !line.startsWith('---')) {
+      deletions += 1;
+    }
+  });
+
+  flushCurrentFile();
+
+  if (!summaries.length && changedFiles.length) {
+    return changedFiles.map((file) => ({ file, additions: 0, deletions: 0 }));
+  }
+
+  return summaries.filter(({ file }) => changedFiles.includes(file));
+}
+
+function renderReport(result, context = {}) {
+  const severity = String(result.severity || 'low');
+  const explanation = result.explanation || 'No explanation provided.';
+  const summaryPanel = boxen(
+    `${chalk.bold('Review Summary')}\n${chalk.bold('Severity')}: ${getSeverityColor(severity)(severity)}\n${chalk.dim(explanation)}`,
+    {
+      padding: 1,
+      borderStyle: 'round',
+      borderColor: 'cyan',
+    }
+  );
+
+  console.log(summaryPanel);
+
+  const changedFiles = summarizeChangedFiles(context);
+  if (changedFiles.length) {
+    console.log('');
+    console.log(chalk.bold('Changed files:'));
+    changedFiles.forEach(({ file, additions, deletions }) => {
+      const changeSummary = `${chalk.green(`+${additions}`)} ${chalk.red(`-${deletions}`)}`;
+      console.log(`- ${chalk.cyan(file)} (${changeSummary})`);
+    });
+  }
+
+  const issues = Array.isArray(result.issues) ? result.issues : [];
+  if (issues.length === 0) {
+    console.log('');
+    console.log(`${logSymbols.success} ${chalk.green('No issues found.')}`);
     return;
   }
-  console.log(`Issues (${result.issues.length}):`);
-  result.issues.forEach((issue, index) => {
-    const location = issue.line ? `${issue.file}:${issue.line}` : issue.file;
-    console.log(`${index + 1}. [${issue.category || 'other'}] ${location}`);
-    console.log(`   ${issue.message}`);
+
+  const table = new Table({
+    head: ['#', 'Category', 'Location', 'Message'],
+    style: { head: ['cyan'] },
+    wordWrap: true,
   });
+
+  issues.forEach((issue, index) => {
+    const location = getIssueLocation(issue);
+    table.push([
+      index + 1,
+      chalk.magenta(issue.category || 'other'),
+      location,
+      issue.message || ''
+    ]);
+  });
+
+  console.log('');
+  console.log(table.toString());
+
   if (result.suggestedFixes && result.suggestedFixes.length) {
     console.log('');
-    console.log('Suggested fixes:');
+    console.log(chalk.bold.underline('Suggested fixes:'));
     result.suggestedFixes.forEach((fix, index) => {
-      console.log(`${index + 1}. ${fix}`);
+      console.log(`${chalk.cyan(`${index + 1}.`)} ${fix}`);
     });
   }
 }
@@ -158,20 +265,33 @@ async function main() {
   const endpoint = process.env.REVIEW_BACKEND_URL || localBackendUrl || remoteBackendUrl;
   const context = collectContext(cwd);
   if (!context.stagedDiff && !context.changedFiles.length) {
-    console.log('No staged changes found.');
+    console.log(`${logSymbols.info} ${chalk.dim('No staged changes found.')}`);
     return;
   }
-  const result = await postReview(context, endpoint);
-  renderReport(result);
+
+  const spinner = ora({ text: 'Reviewing staged changes...', color: 'cyan' }).start();
+  try {
+    const result = await postReview(context, endpoint);
+    spinner.succeed('Review complete');
+    renderReport(result, context);
+  } catch (error) {
+    spinner.fail('Review failed');
+    if (Array.isArray(error.issues) && error.issues.length) {
+      const locations = error.issues.map((issue) => getIssueLocation(issue)).join(', ');
+      error.message = `${error.message} (${locations})`;
+    }
+    throw error;
+  }
 }
 
 if (require.main === module) {
   main().catch((error) => {
-    console.error(error.message);
+    console.error(chalk.red(`${logSymbols.error} ${error.message}`));
     process.exit(1);
   });
 }
 
 module.exports = {
   loadEnvironmentVariables,
+  renderReport,
 };

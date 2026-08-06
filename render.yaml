@@ -4,6 +4,7 @@ services:
     env: docker
     region: oregon
     plan: free
+    dockerContext: backend
     dockerfilePath: backend/Dockerfile
     healthCheckPath: /health
     envVars:
@@ -14,4 +15,6 @@ services:
       - key: GROQ_API_KEY
         sync: false
       - key: HF_TOKEN
+        sync: false
+      - key: ANTIGRAVITY_API_KEY
         sync: false

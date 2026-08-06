@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { loadEnvironmentVariables } = require('../bin/review.js');
+const { loadEnvironmentVariables, renderReport } = require('../bin/review.js');
 
 test('review command exits when run outside a git repo', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-cli-test-'));
@@ -46,5 +46,35 @@ test('review command reports when the current directory does not exist', () => {
     assert.match(`${result.stdout}\n${result.stderr}`, /not a Git repository/i);
   } finally {
     process.chdir(originalCwd);
+  }
+});
+
+test('renderReport includes changed-file summary and issue locations', () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => {
+    logs.push(args.join(' '));
+  };
+
+  try {
+    renderReport(
+      {
+        severity: 'high',
+        explanation: 'Potential bug',
+        issues: [{ file: 'src/app.js', line: 10, category: 'bug', message: 'Unsafe access' }]
+      },
+      {
+        changedFiles: ['src/app.js'],
+        stagedDiff: ['diff --git a/src/app.js b/src/app.js', '@@ -1 +1 @@', '-old', '+new'].join('\n')
+      }
+    );
+
+    const output = logs.join('\n');
+    assert.match(output, /Changed files/i);
+    assert.match(output, /src\/app\.js/i);
+    assert.match(output, /src\/app\.js:10/i);
+    assert.match(output, /Unsafe access/i);
+  } finally {
+    console.log = originalLog;
   }
 });
