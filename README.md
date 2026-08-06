@@ -2,6 +2,12 @@
 
 This repository now supports a standalone CLI-first architecture for AI-assisted code review.
 
+The backend is deployed at https://ai-precommitreviewer.onrender.com
+
+you can download the cli npm package by executing npm install -g cli-precommit-reviewer@latest in ur terminal.
+
+I have shared the end result scroll down.
+
 ## Architecture
 
 - A lightweight npm CLI named review runs from any Git repository.
@@ -80,6 +86,8 @@ cd backend
 ```
 
 ## Notes
+tested results on a git repo
+<img width="1917" height="1063" alt="image" src="https://github.com/user-attachments/assets/ea0fca00-c339-4169-9075-eab651e99b25" />
 
-The old extension package has been removed, and the primary workflow is now the standalone CLI plus backend service.
+The otestld extension package has been removed, and the primary workflow is now the standalone CLI plus backend service.
 
