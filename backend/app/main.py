@@ -61,6 +61,24 @@ def _validate_repo_path(repo_path: str) -> str:
         raise HTTPException(status_code=400, detail=f"repoPath does not exist or is not a directory: {repo_path}")
     return repo_path
 
+
+def _get_review_context(payload: dict) -> tuple[str, dict]:
+    repo_path = payload.get("repoPath")
+    if repo_path and os.path.isdir(repo_path):
+        analyzer = GitAnalyzer(repo_path)
+        return repo_path, analyzer.get_context()
+
+    branch = payload.get("branch") or ""
+    staged_diff = payload.get("stagedDiff") or ""
+    changed_files = payload.get("changedFiles") or []
+    if isinstance(changed_files, str):
+        changed_files = [changed_files]
+    return repo_path or "", {
+        "branch": branch,
+        "stagedDiff": staged_diff,
+        "changedFiles": changed_files,
+    }
+
 @app.post("/analyze/context")
 async def get_context(payload: dict):
     if "repoPath" not in payload:
@@ -109,11 +127,14 @@ async def review_cli(payload: dict, request: Request):
         if token != expected_token:
             raise HTTPException(status_code=401, detail="Invalid authorization token")
 
-    repo_path = _validate_repo_path(payload.get("repoPath") or ".")
+    repo_path = payload.get("repoPath") or "."
+    if repo_path and os.path.isdir(repo_path):
+        repo_path = _validate_repo_path(repo_path)
+    else:
+        repo_path = repo_path or ""
 
     try:
-        analyzer = GitAnalyzer(repo_path)
-        context = analyzer.get_context()
+        repo_path_for_context, context = _get_review_context(payload)
         secret_findings = SecretScanner.scan(context.get("stagedDiff", ""))
         if secret_findings:
             return {
@@ -133,7 +154,7 @@ async def review_cli(payload: dict, request: Request):
 
         service = get_review_service()
         result = await service.analyze(
-            repo_path,
+            repo_path_for_context or repo_path,
             context.get("branch", ""),
             context.get("stagedDiff", ""),
             context.get("changedFiles", []),

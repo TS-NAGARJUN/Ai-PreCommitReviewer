@@ -7,7 +7,7 @@ const chalk = require('chalk').default || require('chalk');
 const ora = require('ora').default || require('ora');
 const Table = require('cli-table3');
 const boxen = require('boxen').default || require('boxen');
-const logSymbols = require('log-symbols');
+const logSymbols = require('log-symbols').default || require('log-symbols');
 
 function loadEnvironmentVariables({ cwd = process.cwd(), existingEnv = process.env } = {}) {
   const env = { ...existingEnv };
