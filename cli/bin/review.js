@@ -62,7 +62,6 @@ function detectRepo(cwd) {
 
 function collectContext(cwd) {
   return {
-    repoPath: cwd,
     branch: runGit(['branch', '--show-current'], cwd),
     repoName: path.basename(cwd),
     commitHash: runGit(['rev-parse', 'HEAD'], cwd),
@@ -264,14 +263,20 @@ async function main() {
 
   const endpoint = process.env.REVIEW_BACKEND_URL || localBackendUrl || remoteBackendUrl;
   const context = collectContext(cwd);
-  if (!context.stagedDiff && !context.changedFiles.length) {
+  const payload = {
+    branch: context.branch,
+    stagedDiff: context.stagedDiff,
+    changedFiles: context.changedFiles,
+    repoPath: cwd,
+  };
+  if (!payload.stagedDiff && !payload.changedFiles.length) {
     console.log(`${logSymbols.info} ${chalk.dim('No staged changes found.')}`);
     return;
   }
 
   const spinner = ora({ text: 'Reviewing staged changes...', color: 'cyan' }).start();
   try {
-    const result = await postReview(context, endpoint);
+    const result = await postReview(payload, endpoint);
     spinner.succeed('Review complete');
     renderReport(result, context);
   } catch (error) {
